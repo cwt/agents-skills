@@ -1,6 +1,6 @@
 ---
 name: zig-0160-development
-description: Zig 0.16.0 coding skill for small local LLMs (9B-12B). Short rules, one true style, full copy-paste programs. Covers main(init), std.Io, unmanaged containers, build.zig, tests, C headers.
+description: Zig 0.16.0 coding skill for small local LLMs (9B-27B). Short rules, one true style, full copy-paste programs. Covers main(init), std.Io, unmanaged containers, build.zig, tests, C headers.
 ---
 
 # Zig 0.16.0 Skill (for small local LLMs)
@@ -26,7 +26,7 @@ Target version: **Zig 0.16.0** only.
 ## 1. Hard rules (memorize)
 
 | # | Rule | Wrong | Right |
-|---|------|-------|-------|
+| --- | --- | --- | --- |
 | 1 | `main` takes `init` | `pub fn main() !void` | `pub fn main(init: std.process.Init) !void` |
 | 2 | I/O needs `io` | `std.fs.cwd().openFile(...)` | `std.Io.Dir.cwd().openFile(io, ...)` |
 | 3 | Alloc needs `allocator` | hidden alloc | pass `gpa` / `arena` every time |
@@ -37,6 +37,11 @@ Target version: **Zig 0.16.0** only.
 | 8 | Strings | C-style `char*` thinking | `[]const u8` (bytes + length) |
 | 9 | Print strings | `"{}"` for string | `"{s}"` for string, `"{d}"` for int, `"{t}"` for error/enum |
 | 10 | End every statement | missing `;` | always `;` |
+| 11 | Heap struct init | field-by-field after `create` | `p.* = .{ ... }` full struct literal |
+| 12 | Safe casts on input | unchecked `@intCast(x)` | bounds check or `std.meta.intToEnum` |
+| 13 | Safe buffer print | `bufPrint(...) catch unreachable` | `try bufPrint(...)` or `allocPrint` |
+| 14 | Realloc under defer | `free(buf); buf = alloc(...)` | `realloc` or alloc new before free |
+| 15 | Slices & C strings | pass `[]u8` to C `char*` | `gpa.dupeZ(u8, s)` (need null terminator) |
 
 ---
 
@@ -202,6 +207,27 @@ Method receiver cheat sheet:
 - `self: *T` → will mutate
 - `self: *const T` → read only, no copy of big structs
 
+Heap-allocated struct (ALWAYS use struct literal):
+
+```zig
+const Node = struct {
+    id: u32,
+    next: ?*Node,
+};
+
+const node = try gpa.create(Node);
+defer gpa.destroy(node);
+
+// RIGHT: struct literal initializes every field
+node.* = .{
+    .id = 1,
+    .next = null,
+};
+
+// WRONG:
+// node.id = 1; (leaves new/other fields uninitialized garbage memory!)
+```
+
 ### 3.6 Errors
 
 ```zig
@@ -242,9 +268,25 @@ fn load(gpa: std.mem.Allocator) ![]u8 {
 }
 ```
 
-- `defer` → always runs at end of scope
-- `errdefer` → runs only on error path
+- `defer` → always runs at end of scope (LIFO order)
+- `errdefer` → runs only on error path (put on IMMEDIATE line after resource acquisition)
 - NEVER write `catch {}` or `catch |_| {}`
+
+Growing a buffer under `defer free` (NO double-free):
+
+```zig
+// WRONG: if second alloc fails with OOM, defer frees already-freed ptr!
+// gpa.free(buf);
+// buf = try gpa.alloc(u8, new_size);
+
+// RIGHT: use realloc:
+buf = try gpa.realloc(buf, new_size);
+
+// OR allocate to a temporary first:
+const new_buf = try gpa.alloc(u8, new_size);
+gpa.free(buf);
+buf = new_buf;
+```
 
 ### 3.7 comptime (generics)
 
@@ -266,6 +308,28 @@ test "add works" {
 ```
 
 Run: `zig build test`
+
+### 3.9 Safe casting & numbers (never panic on external data)
+
+Zig panics at runtime on invalid casts in safe builds:
+
+```zig
+// 1. Integer narrowing (@intCast panics if val < 0 or val > max):
+if (val > std.math.maxInt(u8)) return error.ValueOutOfRange;
+const small: u8 = @intCast(val);
+
+// 2. Float to int (@intFromFloat panics on NaN, Inf, or overflow):
+if (!std.math.isFinite(f) or f < 0.0 or f > 1e15) return error.InvalidNumber;
+const ms: u64 = @intFromFloat(f);
+
+// 3. Integer to enum (@enumFromInt panics if tag is undefined):
+// WRONG: const mode: Mode = @enumFromInt(raw);
+// RIGHT:
+const mode = std.meta.intToEnum(Mode, raw) catch return error.InvalidMode;
+
+// 4. File descriptors (0 is stdin! Only negative is invalid):
+if (fd < 0) return error.BadFd; // NOT fd <= 0
+```
 
 ---
 
@@ -297,6 +361,10 @@ WRONG:
 // var list = std.ArrayList(u32).init(gpa);  // OLD
 // var list: std.ArrayList(u32) = .{};       // compile error
 ```
+
+Pointer safety: `append()` reallocates the backing buffer!
+NEVER hold a pointer to `list.items[i]` across any call that can append or mutate the list (dangling pointer / use-after-free).
+If pointers to elements must stay stable, store pointers: `std.ArrayList(*MyStruct)`.
 
 ### 4.2 Hash maps
 
@@ -411,6 +479,20 @@ if (std.mem.cut(u8, "a=b", "=")) |parts| {
 if (std.mem.eql(u8, a, b)) {
     // equal
 }
+
+// Unicode UTF-8 <-> UTF-16 (built-in std.unicode):
+// Allocate null-terminated UTF-16 from UTF-8:
+const u16_z = try std.unicode.utf8ToUtf16LeAllocZ(gpa, "hello");
+defer gpa.free(u16_z);
+
+// Fixed buffer UTF-8 -> UTF-16 (dest must be >= 2 * src.len + 1):
+var u16_buf: [128]u16 = undefined;
+const u16_len = try std.unicode.utf8ToUtf16Le(&u16_buf, "hello");
+
+// Fixed buffer UTF-16 -> UTF-8 (dest must be >= 3 * utf16.len + 1):
+var u8_buf: [128]u8 = undefined;
+const u8_len = try std.unicode.utf16LeToUtf8(&u8_buf, u16_buf[0..u16_len]);
+_ = u8_len;
 ```
 
 ### 5.6 Subprocesses (`std.process.spawn`)
@@ -425,7 +507,7 @@ _ = term;
 
 Do NOT use `std.process.Child.init` (removed in 0.16).
 
-### 5.7 Fixed buffer Reader and Writer
+### 5.7 Fixed buffer Reader and Writer & safe formatting
 
 `std.io` namespace and `fixedBufferStream` are REMOVED in 0.16. Use `.fixed`:
 
@@ -439,6 +521,15 @@ const written: []const u8 = w.buffered();
 // read from fixed slice
 var r = std.Io.Reader.fixed("12345");
 const slice = try r.take(5); // take N bytes
+
+// Formatting strings safely:
+// NEVER use `catch unreachable` on bufPrint — if text overflows, it PANICS!
+var str_buf: [64]u8 = undefined;
+const str = std.fmt.bufPrint(&str_buf, "id={d}", .{id}) catch return error.BufferTooSmall;
+
+// Dynamic string formatting (preferred for variable or unknown lengths):
+const heap_str = try std.fmt.allocPrint(gpa, "user={s}:{d}", .{ name, id });
+defer gpa.free(heap_str);
 ```
 
 ### 5.8 JSON parsing and formatting
@@ -648,12 +739,34 @@ const c = @import("c");
 
 Do NOT use `@cImport`.
 
+### 7.5 C string interop rules
+
+1. Zig slice (`[]const u8`) has length, NO null terminator.
+2. C functions (`const char*`) require a null terminator `\x00`.
+
+   ```zig
+   // Pass Zig string to C function:
+   const c_path = try gpa.dupeZ(u8, zig_path);
+   defer gpa.free(c_path);
+   _ = c.some_c_function(c_path.ptr);
+   ```
+
+3. C preflight buffer sizing: if a C API reports needed length `N` (excluding NUL), allocate `N + 1` for the terminator!
+4. Read C string to Zig slice:
+
+   ```zig
+   if (c_ptr) |ptr| {
+       const slice: []const u8 = std.mem.span(ptr);
+       _ = slice;
+   }
+   ```
+
 ---
 
 ## 8. OLD Zig → 0.16 (migration table)
 
 | Old (do not use) | New (0.16) |
-|------------------|------------|
+| --- | --- |
 | `pub fn main() !void` | `pub fn main(init: std.process.Init) !void` |
 | `var gpa = std.heap.GeneralPurposeAllocator(.{}){};` in main | `const gpa = init.gpa;` |
 | `std.heap.page_allocator` everywhere in apps | prefer `init.gpa` / `init.arena` |
@@ -674,7 +787,7 @@ Do NOT use `@cImport`.
 | `= .{}` for empty list/map | `= .empty` |
 | `@cImport({ @cInclude("x.h"); })` | `b.addTranslateC` + `@import("c")` |
 | `std.mem.indexOf(u8, hay, needle)` | `std.mem.find(u8, hay, needle)` |
-| `catch {}` / `catch |_| {}` | `try` or real handling |
+| `catch {}` / `catch \|_\| {}` | `try` or real handling |
 | `std.posix.exit` | `std.process.exit` |
 | `GenericReader` / `FixedBufferStream` / `std.io` | `std.Io.Reader.fixed` / `std.Io.Writer.fixed` |
 | `std.process.Child.init(...)` | `std.process.spawn(io, .{.argv = ...})` |
@@ -688,7 +801,7 @@ Do NOT use `@cImport`.
 ## 9. Compiler errors → fix
 
 | Error text | Fix |
-|------------|-----|
+| --- | --- |
 | `missing struct field: items` | use `= .empty` not `= .{}` |
 | `root source file struct 'xxx' has no member named 'main'` | export `pub fn main(init: std.process.Init) !void` |
 | `unknown identifier: std.net` | use `std.Io.net` and pass `io` |
@@ -704,6 +817,10 @@ Do NOT use `@cImport`.
 | `pointer to packed struct field cannot coerce` | copy field to local var, or use `extern struct` |
 | fingerprint error in `build.zig.zon` | paste the fingerprint value from the error message |
 | test timeout after 1.00s | `zig build test --test-timeout-scale=5.0` |
+| `integer does not fit in destination type` | `@intCast` out of range — check bounds first (`if (v > max)`) |
+| `float cannot fit into integer type` / NaN/Inf | `@intFromFloat` panic — check `std.math.isFinite(f)` |
+| `enum tag value not found` | `@enumFromInt` invalid tag — use `std.meta.intToEnum(Enum, val)` |
+| `use of uninitialized value` | initialize allocated struct with `p.* = .{ ... }` |
 
 Verbose errors:
 
@@ -788,6 +905,13 @@ fn handleMany(gpa: std.mem.Allocator) !void {
 - [ ] No `std.io.fixedBufferStream` (use `std.Io.Writer.fixed` or `std.Io.Reader.fixed`)
 - [ ] No `std.json.stringify` (use `std.json.fmt`)
 - [ ] No `std.Thread.Mutex` (use `std.Io.Mutex` with `try mutex.lock(io)`)
+- [ ] Initialized heap struct with `p.* = .{ ... }` struct literal
+- [ ] No unchecked `@intCast` or `@intFromFloat` on external data
+- [ ] Used `std.meta.intToEnum` for untrusted enum tags
+- [ ] No `catch unreachable` on `std.fmt.bufPrint`
+- [ ] No pointer held into `list.items` across `append()`
+- [ ] Buffer growth under `defer free` uses `realloc` or temp alloc (no double-free)
+- [ ] C string calls get null-terminated `[:0]u8` (allocated `len + 1`)
 - [ ] `zig build` ok
 - [ ] `zig build test` ok (if tests)
 
@@ -816,3 +940,9 @@ zig ast-check src/main.zig
 4. Do not ignore compiler errors — they tell you the fix.
 5. Do not write huge frameworks. Small clear functions. Pass `io` + `gpa`.
 6. Do not use `std.process.Child.init`, `std.io.fixedBufferStream`, `std.json.stringify`, or `std.Thread.Mutex` — all removed in 0.16.
+7. Do not initialize heap structs field-by-field after `allocator.create` — use `p.* = .{ ... }`.
+8. Do not use unchecked `@intCast`, `@intFromFloat`, or `@enumFromInt` on external/untrusted inputs.
+9. Do not use `catch unreachable` on `bufPrint`.
+10. Do not hold element pointers while calling `list.append(...)`.
+11. Do not `free(buf); buf = alloc(...);` when `defer free(buf)` is active.
+12. Do not pass non-null-terminated slices to C APIs.
