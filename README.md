@@ -11,7 +11,7 @@ Each skill provides clear guidelines, triggers, rules, and code patterns designe
 | Skill | Description | Key Topics |
 | :--- | :--- | :--- |
 | [**`okf-best-practices`**](./okf-best-practices/SKILL.md) | Google Open Knowledge Format (OKF v0.2) bundle rules and document structures. | YAML frontmatter schemas, trust signals, interlinking standards, document types, consumer robustness constraints. |
-| [**`zig-0160-development`**](./zig-0160-development/SKILL.md) | Comprehensive development guide for **Zig 0.16.0**. | Zig 0.16.0 `main(init)` entry points, `std.Io` / `std.process`, unmanaged containers, memory management, `build.zig`, C interop. |
+| [**`zig-0160-development`**](./zig-0160-development/SKILL.md) | Comprehensive development guide for **Zig 0.16.0**. | Zig 0.16.0 `main(init)` entry points, `std.Io` / `std.process`, unmanaged containers, memory management, `build.zig`, C interop, code review & bug hunting. |
 
 ---
 
@@ -24,7 +24,7 @@ agents-skills/
 │   └── references/
 │       └── okf_specification.md  # Official OKF v0.2 specification reference
 ├── zig-0160-development/
-│   └── SKILL.md                  # Detailed rules, examples, and patterns for Zig 0.16.0
+│   └── SKILL.md                  # Detailed rules, examples, patterns, and code-review checklist for Zig 0.16.0
 ├── LICENSE                       # MIT License
 └── README.md                     # Repository documentation
 ```
