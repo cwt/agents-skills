@@ -1,6 +1,6 @@
 ---
 name: zig-0160-development
-description: Zig 0.16.0 coding skill. Short rules, one true style, full copy-paste programs. Covers main(init), std.Io, unmanaged containers, build.zig, tests, C headers, a code-review bug-hunting checklist, and a section on code that builds on BOTH Zig 0.16.0 and 0.17.0. Every snippet compiled against real Zig 0.16.0; dual-build patterns verified against 0.16.0 and 0.17.0.
+description: Zig 0.16.0 coding skill. Short rules, one true style, full copy-paste programs. Covers main(init), std.Io, unmanaged containers, build.zig, tests, C headers, plus on-demand references for code review and dual 0.16/0.17 builds. Every snippet compiled against real Zig 0.16.0; dual-build patterns verified against 0.16.0 and 0.17.0.
 ---
 
 # Zig 0.16.0 Skill
@@ -1260,234 +1260,45 @@ zig std                              # local std docs HTTP server
 
 ## 15. Reviewing Zig code (bug hunting)
 
-When asked to review Zig code, follow this procedure:
+When asked to review Zig code, FIRST read `references/review-catalog.md`
+(same directory as this file) and follow its procedure:
 
 1. Compile it first (`zig build`, or `zig build-exe file.zig`). Fix compile
    errors before hunting logic bugs.
 2. Run the tests: `zig build test`. Leaks fail the run — the test allocator
    is your best bug finder.
-3. Walk the bug catalog below. For each hit report: file:line, severity
+3. Walk the bug catalog in that file. For each hit report: file:line, severity
    (critical / major / minor), what's wrong, and the fix.
 4. Do not invent bugs. Only report ones you can point to.
 
-### 15.1 Memory bugs
+*Full catalog (memory, pointer, error-handling, I/O, concurrency, format,
+API-misuse, C-interop tables + review prompt) lives in
+`references/review-catalog.md` — walk every table.*
 
-| Smell | Check | Fix |
-| --- | --- | --- |
-| `free(buf); buf = try alloc(...)` with `defer free(buf)` active | double-free if the alloc fails | `realloc`, or alloc to temp before freeing |
-| `try gpa.alloc` with no nearby `defer gpa.free` | leak — who owns it? | add `defer`/`errdefer`, or return ownership clearly |
-| resource acquired, then `try` without `errdefer` | leak on the error path | `errdefer` on the IMMEDIATE next line |
-| `p.field = x` after `gpa.create(T)` | uninitialized fields | `p.* = .{ ... }` struct literal |
-| returning a slice from a loop-local arena | dangling after `arena.reset` | allocate from `gpa`, or return owned memory |
-| `toOwnedSlice()` then `aw.written()` also used | use-after-move | pick ONE |
-| `gpa.dupeZ(...)` result never freed | leak | `defer gpa.free(...)` |
-| `defer _ = dbg.deinit();` | hides the leak report | in tests use `std.testing.allocator`; in apps surface the `Check` result |
-
-### 15.2 Pointer / slice bugs
-
-| Smell | Check | Fix |
-| --- | --- | --- |
-| pointer into `list.items[i]` kept across `append` | dangling after realloc | store index, or store `*T` in the list |
-| slice from `w.buffered()` used after more writes | silently overwritten | finish writing first, or copy |
-| `const chunk = try r.take(5)` then `chunk[4]` | `take` returns UP TO N bytes | check `chunk.len` |
-| slice escaping the scope that owns its buffer | use-after-free | extend the owner's lifetime |
-
-### 15.3 Error-handling bugs
-
-| Smell | Check | Fix |
-| --- | --- | --- |
-| `catch {}` / `catch \|_\| {}` | swallowed failure | `try`, or handle and log |
-| `bufPrint(...) catch unreachable` | PANICS on overflow | return an error, or `allocPrint` |
-| `switch` over an error set without `else` | misses new variants later | add `else` prong |
-| `@intCast(x)` / `@enumFromInt(x)` on untrusted input | panic on bad data | bounds check / `std.enums.fromInt` + `orelse` |
-| `child.wait(io)` result ignored | zombie process | always `try child.wait(io)` |
-| `try` missing on `future.await(io)` when fn returns `!T` | error silently dropped | `try` it |
-
-### 15.4 I/O bugs
-
-| Smell | Check | Fix |
-| --- | --- | --- |
-| writer used, no `flush()` | lost output | `try w.flush()` before close/return |
-| `openFile` without `defer file.close(io)` | fd leak | defer immediately |
-| `readFileAlloc(..., .limited(huge))` or unbounded | memory DoS on big files | small limit + handle `error.StreamTooLong` |
-| `std.debug.print` in a hot loop | slow, unbuffered | buffered `Io.File.Writer` |
-
-### 15.5 Concurrency bugs
-
-| Smell | Check | Fix |
-| --- | --- | --- |
-| shared `var` mutated from `io.async` tasks | data race | guard with `std.Io.Mutex` (`try lock(io)`) |
-| `io.async` assumed to run concurrently | it may run INLINE | `io.concurrent` when ordering matters (handle `error.ConcurrencyUnavailable`) |
-| `future` never awaited/cancelled | leaked task resources | `defer _ = future.cancel(io)` |
-
-### 15.6 Format / print bugs
-
-| Smell | Check | Fix |
-| --- | --- | --- |
-| `{}` on `std.json.fmt(...)` or a custom `format()` | prints a struct dump | `{f}` |
-| `{t}` on `?Error` / `?Enum` | compile error / wrong output | unwrap first |
-| `{s}` on `[]const u16` | garbage | `std.unicode.utf16LeToUtf8` first |
-
-### 15.7 0.16 API-misuse bugs
-
-| Smell | Check | Fix |
-| --- | --- | --- |
-| `std.StringHashMap(T) = .empty` | managed type has no `.empty` | `StringHashMapUnmanaged` |
-| `file.reader(&buf)` / `file.writer(&buf)` | missing `io` arg | `file.reader(io, &buf)` |
-| `std.io.*`, `std.Thread.Mutex`, `std.json.stringify`, `std.process.Child.init` | all removed in 0.16 | see §8 migration table |
-| `std.process.argsAlloc` | removed in 0.16 | `init.minimal.args.toSlice(arena)` or `std.process.Args.Iterator` |
-| `std.meta.intToEnum` | gone | `std.enums.fromInt` |
-
-### 15.8 C-interop bugs
-
-| Smell | Check | Fix |
-| --- | --- | --- |
-| `[]const u8` passed to C `char*` | missing NUL terminator | `gpa.dupeZ(u8, s)` |
-| C preflight returns `N`, buffer of `N` allocated | NUL written out of bounds | allocate `N + 1` |
-| `std.mem.span(ptr)` on nullable C pointer | segfault on null | null-check first |
-
-### 15.9 Review prompt (paste with the code)
-
-```text
-Review this Zig 0.16.0 code for bugs. For each issue give file:line,
-severity (critical/major/minor), what's wrong, and the fix.
-Check: memory ownership (defer/errdefer, double-free, leaks), list pointer
-invalidation, error handling (no catch {}), I/O (flush, close, size limits),
-concurrency races, format specifiers ({s}/{d}/{t}/{f}), API names against the
-skill, C string termination. Do not invent bugs — only report ones you can
-point to in the code.
-```
+*Full catalog (memory, pointer, error-handling, I/O, concurrency, format,
+API-misuse, C-interop tables + review prompt) lives in
+`references/review-catalog.md` — walk every table.*
 
 ---
 
 ## 16. Coding for both Zig 0.16.0 and 0.17.0
 
-The `std.Io` core (introduced in 0.16) is stable into 0.17, so most code
-compiles unchanged on both. The divergences are in `build.zig` (field
-renames) and a handful of removed std symbols. When you use the §16.1 forms,
-application source needs no `comptime` version branches — only `build.zig`
-may need `@hasField` gates (§16.3).
+Default: write the §1–§14 forms — they build on 0.17 too. You only need
+`references/dual-016-017.md` (same directory as this file) when the task
+mentions 0.17, or when 0.16 source fails on the 0.17 toolchain. FIRST read
+that file, then follow it.
 
-> Verified against the installed std libraries of **both** 0.16.0 and 0.17.0:
-> `std.fmt.allocPrint`, `std.enums.fromInt`, `std.heap.DebugAllocator`, and
-> `b.addTranslateC` all still compile on 0.17.0. `@cImport` does **not** — it is
-> an invalid builtin on 0.17.0.
+Dual-safe core (stable on both, no version branches needed): `main(init:
+std.process.Init)`, `std.Io.*`, unmanaged `.empty` containers,
+`std.enums.fromInt`, `std.heap.DebugAllocator`, `b.addTranslateC`,
+`std.fmt.bufPrintSentinel`, `std.meta.fieldNames`. Hard rule: no `@cImport`,
+no `bufPrintZ`, no `dupeZ`, no `**`, no `void{}`, no `i0`.
 
-### 16.1 Dual-safe patterns (compile on both 0.16.0 and 0.17.0)
+*Full dual-build reference (dual-safe table, hard-removal table, version
+detection, test gate, guideline) lives in `references/dual-016-017.md`.*
 
-| Pattern | Notes |
-| --- | --- |
-| `pub fn main(init: std.process.Init) !void` | unchanged |
-| `std.Io.*` — `Dir`, `File`, `Reader`/`Writer` (`.fixed`/`.allocating`), `sleep`, `net`, `Mutex`, `Semaphore` | stable across both |
-| `std.ArrayList(T) = .empty`, `append(gpa, x)`, `deinit(gpa)` | unchanged |
-| `std.StringHashMapUnmanaged` / `std.AutoHashMapUnmanaged` | unchanged |
-| `std.fmt.allocPrint(gpa, fmt, args)` | **still present in 0.17** (deprecated alias). Do NOT switch to `allocator.print(...)` — that method does not exist in 0.16. |
-| `std.enums.fromInt(E, v) orelse ...` | present in both. Prefer this over `@enumFromInt`/`@intFromEnum` (deprecated in 0.17). |
-| `std.heap.DebugAllocator(.{})` | present in both (deprecated in 0.17 in favor of `std.heap.SafeAllocator`, but still compiles) |
-| `b.addTranslateC(...)` + `root_module.addImport("c", ...)` | present in both 0.16 and 0.17 |
-| `std.fmt.bufPrintSentinel(buf, fmt, args, 0)` | present in both (this is the null-terminated form; `bufPrintZ` was removed in 0.17) |
-| `std.meta.fieldNames(T)` | present in both; use instead of `std.meta.fields(T)[i]` (`fieldTypes` exists only on 0.17 — avoid it for dual builds) |
-| `std.mem.indexOf` / `std.mem.find` | both live aliases in 0.16 and 0.17 (`indexOf = find`) |
+*Full dual-build reference (dual-safe table, hard-removal table, version
+detection, test gate, guideline) lives in `references/dual-016-017.md`.*
 
-**Takeaway:** write the 0.16 forms from §1–§15 and they build on 0.17 too.
-
-### 16.2 Hard removals in 0.17.0 — avoid or version-gate
-
-Verified against the 0.16.0 and 0.17.0 std libraries. **All left-column forms
-still compile on 0.16** — they are what breaks a 0.16 source tree on 0.17.
-
-| Removed in 0.17 (`error` / compile failure) | Use instead (works on BOTH 0.16 and 0.17) |
-| --- | --- |
-| `@cImport(...)` — `error: invalid builtin function: '@cImport'` | `b.addTranslateC` (§7.5) |
-| `void{}` | `{}` |
-| `i0` type | `u0` |
-| `a ** b` (array repetition, e.g. `[_]u8{0} ** 16`) | `std.mem.zeroes([N]T)` for zero-init, else `@memset(&arr, v)` (0.17 suggests `@splat`, but array `@splat` does not exist in 0.16 — `zeroes`/`@memset` work on both) |
-| `errdefer \|err\| { ... }` | split into `catch \|err\|` + helper function |
-| `std.lang.OptimizeMode` (`.Debug`/`.ReleaseSafe`) | `std.lang.Optimize` (`.debug`/`.safe`); or use `b.standardOptimizeOption(.{})` to avoid naming variants |
-| `Allocator.dupeZ(T, slice)` | `gpa.allocSentinel(T, n, 0)` then `@memcpy` the bytes (`dupeZ` absent in 0.17) |
-| `std.fmt.bufPrintZ(buf, ...)` | `std.fmt.bufPrintSentinel(buf, ..., 0)` (identical signature; `bufPrintZ` absent in 0.17) |
-| `std.meta.fields(T)[i].name` / `.fields` shape | `std.meta.fieldNames(T)` (present in both); or iterate `field_names`/`field_types` from `@typeInfo` |
-| `std.ascii.indexOfIgnoreCase` | `std.ascii.findIgnoreCase` (present in both; `indexOfIgnoreCase` removed in 0.17) |
-| `ArrayList(T){ .items = ..., .capacity = ... }` literal | `= .empty` then `append` — 0.17 added a `pointer_stability` field, so the explicit struct literal no longer matches |
-
-Rule of thumb: **pick the shared surface, not the new API.** 0.16's
-`bufPrintSentinel`, `meta.fieldNames`, `mem.zeroes`, `allocSentinel`, and
-`= .empty` are all present in 0.17 too.
-
-Renames that still compile as deprecated aliases (safe to use on both):
-`std.builtin` → `std.lang`, `std.bit_set.IntegerBitSet` → `Integer`.
-For `ArrayList`, use `getLastOrNull` (works on both; `last` is the 0.17
-canonical name with `getLastOrNull` kept as alias).
-Avoid `std.heap.StackFallbackAllocator` for dual builds — 0.17 reworked it into
-`BufferFirstAllocator` with a different API (buffer passed as argument, not a
-size parameter), so there is no drop-in shared spelling.
-
-> **`std.mem.indexOf` vs `find`:** `indexOf` is a live alias for `find` in
-> **both** 0.16 and 0.17 (`pub const indexOf = find;` in mem.zig). Either name
-> compiles on both — `find` is just the canonical spelling. Don't "fix" working
-> `indexOf` calls.
-
-### 16.3 Detecting the version
-
-In `build.zig`, detect a rename with `@hasField` so one file runs on both:
-
-```zig
-// 0.16 has b.build_root; 0.17 renamed it to b.root
-const root_handle = if (@hasField(std.Build, "build_root"))
-    b.build_root.handle
-else
-    b.root.root_dir.handle;
-
-// optimize enum casing changed: 0.16 .Debug/.ReleaseSafe, 0.17 .debug/.safe
-const Opt = @TypeOf(optimize);
-const debug_mode: Opt =
-    if (@hasField(Opt, "debug")) .debug else .Debug;
-```
-
-In application source, branch on `@import("builtin").zig_version` only when a
-std symbol has **no** common spelling:
-
-```zig
-const builtin = @import("builtin");
-// 0.17.0 -> { .major = 0, .minor = 17, .patch = 0 }
-const zig_is_017 = builtin.zig_version.minor >= 17;
-```
-
-In practice you almost never need this — prefer the dual-safe forms in §16.1.
-
-### 16.4 Dual-toolchain test gate
-
-To prove one source tree builds on both, run the tests for each toolchain with
-**isolated** cache dirs so their caches don't cross-pollute:
-
-```sh
-#!/usr/bin/env bash
-# Run the test suite on BOTH Zig 0.16.0 and 0.17.0.
-# Set Z16 / Z17 to the zig binaries for each toolchain.
-set -e
-Z16="${Z16:-zig-0.16.0}"
-Z17="${Z17:-zig-0.17.0}"
-
-run() {
-  local zig="$1" cache="$2"
-  "$zig" build test --cache-dir "$cache"
-}
-
-run "$Z16" .cache/bt16 && echo "0.16.0 OK"
-run "$Z17" .cache/bt17 && echo "0.17.0 OK"
-echo "BOTH TOOLCHAINS OK"
-```
-
-Key points:
-- Use a **separate `--cache-dir`** per toolchain.
-- If you target Linux, also verify a Linux build passes
-  (`-Dtarget=x86_64-linux-gnu` or `-musl`).
-
-### 16.5 Guideline
-
-Keep **one** source tree. Write the 0.16 forms from §1–§15 (they are the
-dual-safe forms). Only add `comptime` version branches for a symbol that has no
-shared spelling — and when you do, gate it behind `@hasField` (build.zig) or
-`builtin.zig_version` (source). Prefer the deprecation-safe path:
-`std.enums.fromInt` over `@enumFromInt`, `std.fmt.allocPrint` over
-`allocator.print`, `b.addTranslateC` over `@cImport`.
+*Full dual-build reference (dual-safe table, hard-removal table, version
+detection, test gate, guideline) lives in `references/dual-016-017.md`.*
