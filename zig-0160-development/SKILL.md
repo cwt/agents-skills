@@ -1,19 +1,21 @@
 ---
 name: zig-0160-development
-description: Zig 0.16.0 coding skill for small local LLMs (9B-27B). Short rules, one true style, full copy-paste programs. Covers main(init), std.Io, unmanaged containers, build.zig, tests, C headers, and a code-review bug-hunting checklist. Every snippet compiled against real Zig 0.16.0.
+description: Zig 0.16.0 coding skill. Short rules, one true style, full copy-paste programs. Covers main(init), std.Io, unmanaged containers, build.zig, tests, C headers, a code-review bug-hunting checklist, and a section on code that builds on BOTH Zig 0.16.0 and 0.17.0. Every snippet compiled against real Zig 0.16.0; dual-build patterns verified against 0.16.0 and 0.17.0.
 ---
 
-# Zig 0.16.0 Skill (for small local LLMs)
+# Zig 0.16.0 Skill
 
 You know NOTHING about Zig. Use ONLY this file.
 
-Target version: **Zig 0.16.0** only. Every code block below was compiled with
-`zig 0.16.0` on x86_64-linux. If a compiler error contradicts this file,
-trust the compiler — then tell the user this file was wrong.
+Target version: **Zig 0.16.0**, and the patterns below are also verified to
+build on **Zig 0.17.0** (see §16 — no separate source tree needed). Every code
+block was compiled with `zig 0.16.0` on x86_64-linux. If a compiler error
+contradicts this file, trust the compiler — then tell the user this file was
+wrong.
 
 Ground truth is local, not this file:
 
-- `zig version` must print `0.16.0`.
+- `zig version` must print `0.16.0` (or `0.17.0` — see §16 for dual builds).
 - `zig env` → `.std_dir` is the standard library source. `grep` it to verify any API.
 - `zig std` starts a local HTTP server with the std library docs.
 
@@ -43,7 +45,7 @@ Ground truth is local, not this file:
 | 5 | Empty hash map | `std.StringHashMap(T) = .empty` (no-suffix = MANAGED!) | `std.StringHashMapUnmanaged(T) = .empty` |
 | 6 | Free memory | forget `defer` | `defer list.deinit(gpa);` |
 | 7 | No silent errors | `catch {}` | `try` or handle for real |
-| 8 | No `@cImport` (deprecated) | `@cImport(@cInclude(...))` | `b.addTranslateC` in `build.zig` |
+| 8 | No `@cImport` (removed in 0.17.0) | `@cImport(@cInclude(...))` | `b.addTranslateC` in `build.zig` (still available in both 0.16 and 0.17) |
 | 9 | Strings | C-style `char*` thinking | `[]const u8` (bytes + length) |
 | 10 | Format strings | `"{}"` for string | `"{s}"` string, `"{d}"` int, `"{t}"` error/enum, `"{f}"` custom `format()` method |
 | 11 | End every statement | missing `;` | always `;` |
@@ -485,7 +487,8 @@ try ordered.put(gpa, 10, 100);
 ### 4.3 Priority queue
 
 ```zig
-fn lessThan(a: u32, b: u32) std.math.Order {
+fn lessThan(context: void, a: u32, b: u32) std.math.Order {
+    _ = context;
     return std.math.order(a, b);
 }
 
@@ -615,19 +618,11 @@ if (std.mem.eql(u8, a, b)) {
     // equal
 }
 
-// Unicode UTF-8 <-> UTF-16 (built-in std.unicode):
-// Allocate null-terminated UTF-16 from UTF-8:
+// Unicode UTF-8 <-> UTF-16 (built-in std.unicode).
+// Fixed-buffer sizes must fit data + NUL: UTF-8 -> UTF-16 needs >= 2 * len + 1
+// u16s, UTF-16 -> UTF-8 needs >= 3 * len + 1 u8s:
 const u16_z = try std.unicode.utf8ToUtf16LeAllocZ(gpa, "hello");
 defer gpa.free(u16_z);
-
-// Fixed buffer UTF-8 -> UTF-16 (dest must be >= 2 * src.len + 1):
-var u16_buf: [128]u16 = undefined;
-const u16_len = try std.unicode.utf8ToUtf16Le(&u16_buf, "hello");
-
-// Fixed buffer UTF-16 -> UTF-8 (dest must be >= 3 * utf16.len + 1):
-var u8_buf: [128]u8 = undefined;
-const u8_len = try std.unicode.utf16LeToUtf8(&u8_buf, u16_buf[0..u16_len]);
-_ = u8_len;
 ```
 
 ### 5.7 Subprocesses
@@ -680,7 +675,8 @@ const slice = try r.take(5); // take N bytes
 var str_buf: [64]u8 = undefined;
 const str = std.fmt.bufPrint(&str_buf, "id={d}", .{id}) catch return error.BufferTooSmall;
 
-// null-terminated variant (bufPrintZ still exists; bufPrintSentinel is the modern name):
+// null-terminated variant: bufPrintZ was REMOVED in 0.17.0 — use bufPrintSentinel
+// (identical signature in 0.16 and 0.17):
 var z_buf: [64]u8 = undefined;
 const z = try std.fmt.bufPrintSentinel(&z_buf, "id={d}", .{id}, 0);
 _ = z;
@@ -993,7 +989,9 @@ const c = @import("c");
 // call C functions from c.
 ```
 
-Do NOT use `@cImport` (deprecated; will be removed).
+Do NOT use `@cImport` — **removed in 0.17.0** (`error: invalid builtin
+function: '@cImport'`). Use `b.addTranslateC` (§7.5), which is still available in
+both 0.16 and 0.17.
 
 ### 7.6 C string interop rules
 
@@ -1062,26 +1060,19 @@ zig build test --test-timeout-scale=5 # multiply the default 1s timeout
 | `std.Thread.Pool` | `std.Io.async` / `std.Io.Group` / `Future(T)` |
 | `std.once` | REMOVED — hand-roll it |
 | `var list = std.ArrayList(T).init(allocator)` | `var list: std.ArrayList(T) = .empty;` |
-| `try list.append(x)` | `try list.append(gpa, x)` |
-| `list.deinit()` | `list.deinit(gpa)` |
 | `var map = std.StringHashMap(T).init(gpa)` (managed) | `var map: std.StringHashMapUnmanaged(T) = .empty;` |
 | `std.AutoArrayHashMap(K,V)` | `std.array_hash_map.Auto(K,V)` |
 | `std.PriorityQueue` `add` / `remove` | `push` / `pop`; init with `.empty` |
-| `= .{}` for empty list/map | `= .empty` |
-| `@cImport({ @cInclude("x.h"); })` | `b.addTranslateC` + `@import("c")` (deprecated) |
-| `std.mem.indexOf(u8, hay, needle)` | `std.mem.find(u8, hay, needle)` |
+| `@cImport({ @cInclude("x.h"); })` | `b.addTranslateC` + `@import("c")` (removed in 0.17.0; `addTranslateC` still available in both) |
+| `std.mem.indexOf(u8, hay, needle)` | `std.mem.find(u8, hay, needle)` — note: `indexOf` is a **live alias for `find` in BOTH 0.16 and 0.17** (mem.zig: `pub const indexOf = find;`), so either name compiles; `find` is the canonical spelling |
 | `std.mem.trimLeft` | `std.mem.trimStart` |
 | `catch {}` / `catch \|_\| {}` | `try` or real handling |
 | `std.posix.exit` | `std.process.exit` |
-| `GenericReader` / `FixedBufferStream` / `std.io` | `std.Io.Reader.fixed` / `std.Io.Writer.fixed` |
 | `std.process.Child.init(...)` | `std.process.spawn(io, .{.argv = ...})` |
 | `std.process.Child.run(alloc, io, ...)` | `std.process.run(gpa, io, .{.argv = ...})` |
-| `std.json.stringify(...)` | `std.json.fmt(value, .{})` with `{f}` |
-| `std.fmt.bufPrintZ` | still exists; `std.fmt.bufPrintSentinel` is the modern name |
+| `std.fmt.bufPrintZ` | **removed in 0.17.0** — use `std.fmt.bufPrintSentinel(buf, fmt, args, 0)` (identical signature, present in both 0.16 and 0.17) |
 | `std.meta.intToEnum(E, v)` | `std.enums.fromInt(E, v) orelse ...` (returns `?E`) |
-| `{}` on a type with `format()` | `{f}` |
 | `@Type(.{ .int = ... })` | `@Int(.unsigned, 10)` and friends (see §10) |
-| print error with `{}` | print error with `{t}` |
 
 ---
 
@@ -1248,54 +1239,26 @@ const io = threaded.io();
 - [ ] `zig fmt --check .` ok
 - [ ] `zig build` ok
 - [ ] `zig build test` ok (if tests)
+- [ ] No invented `std` APIs — only patterns from this file; no Zig 0.11–0.15 blog code as truth
+- [ ] Read each compiler error, fix it, rebuild before moving on
+- [ ] Small clear functions; library code takes `io` + `gpa` parameters
+- [ ] Ran the §15 review pass on code you didn't write
 
 ---
 
-## 14. Commands cheat sheet
+## 14. Extra commands (basics in §7.1)
 
 ```sh
-zig version          # must show 0.16.0
-zig env              # toolchain + std paths
-zig init             # scaffold project
-zig build            # build
-zig build run        # build + run
-zig build run -- a b # run with args
-zig build test       # tests
-zig build test --test-timeout 500ms
-zig build test --fuzz               # fuzz tests using std.testing.fuzz
-zig test src/x.zig   # test one file
-zig fmt .            # format sources
-zig fmt --check .    # check formatting
-zig ast-check src/main.zig
-zig std              # local std docs HTTP server
+zig build test --test-timeout 500ms  # per-test timeout (default 1s; also --test-timeout-scale=5)
+zig build test --fuzz                # fuzz tests using std.testing.fuzz
+zig fmt .                            # format in place (vs --check)
+zig ast-check src/main.zig           # parse check without building
+zig std                              # local std docs HTTP server
 ```
 
 ---
 
-## 15. What NOT to do
-
-1. Do not invent `std.something` APIs not shown here.
-2. Do not use blog/code from Zig 0.11–0.15 as truth.
-3. Do not use managed container `.init(allocator)` style for new code.
-4. Do not ignore compiler errors — they tell you the fix.
-5. Do not write huge frameworks. Small clear functions. Pass `io` + `gpa`.
-6. Do not use `std.process.Child.init`, `std.io.fixedBufferStream`, `std.json.stringify`, or `std.Thread.Mutex` — all removed in 0.16.
-7. Do not initialize heap structs field-by-field after `allocator.create` — use `p.* = .{ ... }`.
-8. Do not use unchecked `@intCast` or `@enumFromInt` on external/untrusted inputs.
-9. Do not use `catch unreachable` on `bufPrint`.
-10. Do not hold element pointers while calling `list.append(...)`.
-11. Do not `free(buf); buf = alloc(...);` when `defer free(buf)` is active.
-12. Do not pass non-null-terminated slices to C APIs.
-13. Do not use `std.meta.intToEnum` (gone) — it's `std.enums.fromInt` now.
-14. For CLI args use `init.minimal.args.toSlice(arena)` (returns `[]const [:0]const u8`) or iterate with `std.process.Args.Iterator` — never `std.process.argsAlloc` (removed in 0.16).
-15. Do not use `std.crypto.random` — use `io.random` / `io.randomSecure`.
-16. Do not print `std.json.fmt(...)` with `{}` — use `{f}`.
-17. Do not assume `std.StringHashMap(T)` is unmanaged — it's the MANAGED wrapper; unmanaged is `std.StringHashMapUnmanaged(T)`.
-18. Do not skip §16 when reviewing code you didn't write.
-
----
-
-## 16. Reviewing Zig code (bug hunting)
+## 15. Reviewing Zig code (bug hunting)
 
 When asked to review Zig code, follow this procedure:
 
@@ -1307,7 +1270,7 @@ When asked to review Zig code, follow this procedure:
    (critical / major / minor), what's wrong, and the fix.
 4. Do not invent bugs. Only report ones you can point to.
 
-### 16.1 Memory bugs
+### 15.1 Memory bugs
 
 | Smell | Check | Fix |
 | --- | --- | --- |
@@ -1320,7 +1283,7 @@ When asked to review Zig code, follow this procedure:
 | `gpa.dupeZ(...)` result never freed | leak | `defer gpa.free(...)` |
 | `defer _ = dbg.deinit();` | hides the leak report | in tests use `std.testing.allocator`; in apps surface the `Check` result |
 
-### 16.2 Pointer / slice bugs
+### 15.2 Pointer / slice bugs
 
 | Smell | Check | Fix |
 | --- | --- | --- |
@@ -1329,7 +1292,7 @@ When asked to review Zig code, follow this procedure:
 | `const chunk = try r.take(5)` then `chunk[4]` | `take` returns UP TO N bytes | check `chunk.len` |
 | slice escaping the scope that owns its buffer | use-after-free | extend the owner's lifetime |
 
-### 16.3 Error-handling bugs
+### 15.3 Error-handling bugs
 
 | Smell | Check | Fix |
 | --- | --- | --- |
@@ -1340,7 +1303,7 @@ When asked to review Zig code, follow this procedure:
 | `child.wait(io)` result ignored | zombie process | always `try child.wait(io)` |
 | `try` missing on `future.await(io)` when fn returns `!T` | error silently dropped | `try` it |
 
-### 16.4 I/O bugs
+### 15.4 I/O bugs
 
 | Smell | Check | Fix |
 | --- | --- | --- |
@@ -1349,7 +1312,7 @@ When asked to review Zig code, follow this procedure:
 | `readFileAlloc(..., .limited(huge))` or unbounded | memory DoS on big files | small limit + handle `error.StreamTooLong` |
 | `std.debug.print` in a hot loop | slow, unbuffered | buffered `Io.File.Writer` |
 
-### 16.5 Concurrency bugs
+### 15.5 Concurrency bugs
 
 | Smell | Check | Fix |
 | --- | --- | --- |
@@ -1357,7 +1320,7 @@ When asked to review Zig code, follow this procedure:
 | `io.async` assumed to run concurrently | it may run INLINE | `io.concurrent` when ordering matters (handle `error.ConcurrencyUnavailable`) |
 | `future` never awaited/cancelled | leaked task resources | `defer _ = future.cancel(io)` |
 
-### 16.6 Format / print bugs
+### 15.6 Format / print bugs
 
 | Smell | Check | Fix |
 | --- | --- | --- |
@@ -1365,7 +1328,7 @@ When asked to review Zig code, follow this procedure:
 | `{t}` on `?Error` / `?Enum` | compile error / wrong output | unwrap first |
 | `{s}` on `[]const u16` | garbage | `std.unicode.utf16LeToUtf8` first |
 
-### 16.7 0.16 API-misuse bugs
+### 15.7 0.16 API-misuse bugs
 
 | Smell | Check | Fix |
 | --- | --- | --- |
@@ -1375,7 +1338,7 @@ When asked to review Zig code, follow this procedure:
 | `std.process.argsAlloc` | removed in 0.16 | `init.minimal.args.toSlice(arena)` or `std.process.Args.Iterator` |
 | `std.meta.intToEnum` | gone | `std.enums.fromInt` |
 
-### 16.8 C-interop bugs
+### 15.8 C-interop bugs
 
 | Smell | Check | Fix |
 | --- | --- | --- |
@@ -1383,7 +1346,7 @@ When asked to review Zig code, follow this procedure:
 | C preflight returns `N`, buffer of `N` allocated | NUL written out of bounds | allocate `N + 1` |
 | `std.mem.span(ptr)` on nullable C pointer | segfault on null | null-check first |
 
-### 16.9 Review prompt (paste with the code)
+### 15.9 Review prompt (paste with the code)
 
 ```text
 Review this Zig 0.16.0 code for bugs. For each issue give file:line,
@@ -1394,3 +1357,137 @@ concurrency races, format specifiers ({s}/{d}/{t}/{f}), API names against the
 skill, C string termination. Do not invent bugs — only report ones you can
 point to in the code.
 ```
+
+---
+
+## 16. Coding for both Zig 0.16.0 and 0.17.0
+
+The `std.Io` core (introduced in 0.16) is stable into 0.17, so most code
+compiles unchanged on both. The divergences are in `build.zig` (field
+renames) and a handful of removed std symbols. When you use the §16.1 forms,
+application source needs no `comptime` version branches — only `build.zig`
+may need `@hasField` gates (§16.3).
+
+> Verified against the installed std libraries of **both** 0.16.0 and 0.17.0:
+> `std.fmt.allocPrint`, `std.enums.fromInt`, `std.heap.DebugAllocator`, and
+> `b.addTranslateC` all still compile on 0.17.0. `@cImport` does **not** — it is
+> an invalid builtin on 0.17.0.
+
+### 16.1 Dual-safe patterns (compile on both 0.16.0 and 0.17.0)
+
+| Pattern | Notes |
+| --- | --- |
+| `pub fn main(init: std.process.Init) !void` | unchanged |
+| `std.Io.*` — `Dir`, `File`, `Reader`/`Writer` (`.fixed`/`.allocating`), `sleep`, `net`, `Mutex`, `Semaphore` | stable across both |
+| `std.ArrayList(T) = .empty`, `append(gpa, x)`, `deinit(gpa)` | unchanged |
+| `std.StringHashMapUnmanaged` / `std.AutoHashMapUnmanaged` | unchanged |
+| `std.fmt.allocPrint(gpa, fmt, args)` | **still present in 0.17** (deprecated alias). Do NOT switch to `allocator.print(...)` — that method does not exist in 0.16. |
+| `std.enums.fromInt(E, v) orelse ...` | present in both. Prefer this over `@enumFromInt`/`@intFromEnum` (deprecated in 0.17). |
+| `std.heap.DebugAllocator(.{})` | present in both (deprecated in 0.17 in favor of `std.heap.SafeAllocator`, but still compiles) |
+| `b.addTranslateC(...)` + `root_module.addImport("c", ...)` | present in both 0.16 and 0.17 |
+| `std.fmt.bufPrintSentinel(buf, fmt, args, 0)` | present in both (this is the null-terminated form; `bufPrintZ` was removed in 0.17) |
+| `std.meta.fieldNames(T)` | present in both; use instead of `std.meta.fields(T)[i]` (`fieldTypes` exists only on 0.17 — avoid it for dual builds) |
+| `std.mem.indexOf` / `std.mem.find` | both live aliases in 0.16 and 0.17 (`indexOf = find`) |
+
+**Takeaway:** write the 0.16 forms from §1–§15 and they build on 0.17 too.
+
+### 16.2 Hard removals in 0.17.0 — avoid or version-gate
+
+Verified against the 0.16.0 and 0.17.0 std libraries. **All left-column forms
+still compile on 0.16** — they are what breaks a 0.16 source tree on 0.17.
+
+| Removed in 0.17 (`error` / compile failure) | Use instead (works on BOTH 0.16 and 0.17) |
+| --- | --- |
+| `@cImport(...)` — `error: invalid builtin function: '@cImport'` | `b.addTranslateC` (§7.5) |
+| `void{}` | `{}` |
+| `i0` type | `u0` |
+| `a ** b` (array repetition, e.g. `[_]u8{0} ** 16`) | `std.mem.zeroes([N]T)` for zero-init, else `@memset(&arr, v)` (0.17 suggests `@splat`, but array `@splat` does not exist in 0.16 — `zeroes`/`@memset` work on both) |
+| `errdefer \|err\| { ... }` | split into `catch \|err\|` + helper function |
+| `std.lang.OptimizeMode` (`.Debug`/`.ReleaseSafe`) | `std.lang.Optimize` (`.debug`/`.safe`); or use `b.standardOptimizeOption(.{})` to avoid naming variants |
+| `Allocator.dupeZ(T, slice)` | `gpa.allocSentinel(T, n, 0)` then `@memcpy` the bytes (`dupeZ` absent in 0.17) |
+| `std.fmt.bufPrintZ(buf, ...)` | `std.fmt.bufPrintSentinel(buf, ..., 0)` (identical signature; `bufPrintZ` absent in 0.17) |
+| `std.meta.fields(T)[i].name` / `.fields` shape | `std.meta.fieldNames(T)` (present in both); or iterate `field_names`/`field_types` from `@typeInfo` |
+| `std.ascii.indexOfIgnoreCase` | `std.ascii.findIgnoreCase` (present in both; `indexOfIgnoreCase` removed in 0.17) |
+| `ArrayList(T){ .items = ..., .capacity = ... }` literal | `= .empty` then `append` — 0.17 added a `pointer_stability` field, so the explicit struct literal no longer matches |
+
+Rule of thumb: **pick the shared surface, not the new API.** 0.16's
+`bufPrintSentinel`, `meta.fieldNames`, `mem.zeroes`, `allocSentinel`, and
+`= .empty` are all present in 0.17 too.
+
+Renames that still compile as deprecated aliases (safe to use on both):
+`std.builtin` → `std.lang`, `std.bit_set.IntegerBitSet` → `Integer`.
+For `ArrayList`, use `getLastOrNull` (works on both; `last` is the 0.17
+canonical name with `getLastOrNull` kept as alias).
+Avoid `std.heap.StackFallbackAllocator` for dual builds — 0.17 reworked it into
+`BufferFirstAllocator` with a different API (buffer passed as argument, not a
+size parameter), so there is no drop-in shared spelling.
+
+> **`std.mem.indexOf` vs `find`:** `indexOf` is a live alias for `find` in
+> **both** 0.16 and 0.17 (`pub const indexOf = find;` in mem.zig). Either name
+> compiles on both — `find` is just the canonical spelling. Don't "fix" working
+> `indexOf` calls.
+
+### 16.3 Detecting the version
+
+In `build.zig`, detect a rename with `@hasField` so one file runs on both:
+
+```zig
+// 0.16 has b.build_root; 0.17 renamed it to b.root
+const root_handle = if (@hasField(std.Build, "build_root"))
+    b.build_root.handle
+else
+    b.root.root_dir.handle;
+
+// optimize enum casing changed: 0.16 .Debug/.ReleaseSafe, 0.17 .debug/.safe
+const Opt = @TypeOf(optimize);
+const debug_mode: Opt =
+    if (@hasField(Opt, "debug")) .debug else .Debug;
+```
+
+In application source, branch on `@import("builtin").zig_version` only when a
+std symbol has **no** common spelling:
+
+```zig
+const builtin = @import("builtin");
+// 0.17.0 -> { .major = 0, .minor = 17, .patch = 0 }
+const zig_is_017 = builtin.zig_version.minor >= 17;
+```
+
+In practice you almost never need this — prefer the dual-safe forms in §16.1.
+
+### 16.4 Dual-toolchain test gate
+
+To prove one source tree builds on both, run the tests for each toolchain with
+**isolated** cache dirs so their caches don't cross-pollute:
+
+```sh
+#!/usr/bin/env bash
+# Run the test suite on BOTH Zig 0.16.0 and 0.17.0.
+# Set Z16 / Z17 to the zig binaries for each toolchain.
+set -e
+Z16="${Z16:-zig-0.16.0}"
+Z17="${Z17:-zig-0.17.0}"
+
+run() {
+  local zig="$1" cache="$2"
+  "$zig" build test --cache-dir "$cache"
+}
+
+run "$Z16" .cache/bt16 && echo "0.16.0 OK"
+run "$Z17" .cache/bt17 && echo "0.17.0 OK"
+echo "BOTH TOOLCHAINS OK"
+```
+
+Key points:
+- Use a **separate `--cache-dir`** per toolchain.
+- If you target Linux, also verify a Linux build passes
+  (`-Dtarget=x86_64-linux-gnu` or `-musl`).
+
+### 16.5 Guideline
+
+Keep **one** source tree. Write the 0.16 forms from §1–§15 (they are the
+dual-safe forms). Only add `comptime` version branches for a symbol that has no
+shared spelling — and when you do, gate it behind `@hasField` (build.zig) or
+`builtin.zig_version` (source). Prefer the deprecation-safe path:
+`std.enums.fromInt` over `@enumFromInt`, `std.fmt.allocPrint` over
+`allocator.print`, `b.addTranslateC` over `@cImport`.
