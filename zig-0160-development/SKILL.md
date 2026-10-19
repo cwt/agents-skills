@@ -308,7 +308,8 @@ fn load(gpa: std.mem.Allocator) ![]u8 {
 ```
 
 - `defer` → always runs at end of scope (LIFO order)
-- `errdefer` → runs only on error path (put on IMMEDIATE line after resource acquisition)
+- `errdefer` → runs only on error path (put on IMMEDIATE line after resource acquisition). NOTE: `errdefer` only runs if the function returns an error union. If an error is caught with `catch |err| { return; }` (returning `void` or a value), `errdefer` will NEVER run — place cleanup in the `catch` block!
+- Multi-shot callbacks: in async loops or completion callbacks that re-queue work (e.g. partial writes), an unconditional `defer cleanup()` deallocates state while the next SQE is in flight. Guard cleanup with a latch: `var requeued = false; defer if (!requeued) cleanup(state);` (set `requeued = true` before returning on partial resubmission).
 - NEVER write `catch {}` or `catch |_| {}`
 
 Growing a buffer under `defer free` (NO double-free):
@@ -444,6 +445,7 @@ WRONG:
 
 Pointer safety: `append()` reallocates the backing buffer!
 NEVER hold a pointer to `list.items[i]` across any call that can append or mutate the list (dangling pointer / use-after-free).
+Watch out for re-entrancy: calling external/foreign code (e.g. CPython `PyObject_RichCompareBool` or releasing objects via `decref` which can trigger `__del__`) while iterating `list.items` by slice can re-enter your code and append to the list. Use index-based loops (`while (i < list.items.len)`), hold temporary references to candidate elements, and re-check bounds after the call.
 If pointers to elements must stay stable, store pointers: `std.ArrayList(*MyStruct)`.
 
 ### 4.2 Hash maps
@@ -1015,6 +1017,8 @@ both 0.16 and 0.17.
    }
    ```
 
+5. Stealing C APIs: functions like `PyErr_SetRaisedException`, `PyTuple_SetItem`, etc. take ownership of the passed pointer. If the surrounding scope has `defer py_decref(x)` active, passing `x` causes a double-free on scope exit. You MUST pass `py_newref(x)` so the stealing transfer and the local defer each own distinct reference counts.
+
 ### 7.7 Cross-compilation
 
 ```sh
@@ -1234,8 +1238,11 @@ const io = threaded.io();
 - [ ] Used `std.enums.fromInt` for untrusted enum tags
 - [ ] No `catch unreachable` on `std.fmt.bufPrint`
 - [ ] No pointer held into `list.items` across `append()`
+- [ ] No pointer into `list.items` held across foreign calls that can re-enter (e.g. Python callbacks)
+- [ ] No unconditional `defer cleanup` in async callbacks that can re-queue in-flight work (use latch)
 - [ ] Buffer growth under `defer free` uses `realloc` or temp alloc (no double-free)
 - [ ] C string calls get null-terminated `[:0]u8` (allocated `len + 1`)
+- [ ] Stole reference in C API only with `py_newref` if scope has active `defer py_decref`
 - [ ] `zig fmt --check .` ok
 - [ ] `zig build` ok
 - [ ] `zig build test` ok (if tests)

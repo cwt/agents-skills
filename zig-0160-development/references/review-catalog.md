@@ -22,12 +22,15 @@ When asked to review Zig code, follow this procedure:
 | `toOwnedSlice()` then `aw.written()` also used | use-after-move | pick ONE |
 | `gpa.dupeZ(...)` result never freed | leak | `defer gpa.free(...)` |
 | `defer _ = dbg.deinit();` | hides the leak report | in tests use `std.testing.allocator`; in apps surface the `Check` result |
+| unconditional `defer cleanup(x)` in an async/re-queue loop | UAF on next iteration while SQE/op is in flight | guard with latch: `var requeued = false; defer if (!requeued) cleanup(x);` |
+| `parent.deinit()` called before finishing/using `parent.child` | child freed before use (UAF) | `defer parent.deinit()` or extract/incref child before parent cleanup |
 
 ## Pointer / slice bugs
 
 | Smell | Check | Fix |
 | --- | --- | --- |
 | pointer into `list.items[i]` kept across `append` | dangling after realloc | store index, or store `*T` in the list |
+| `for (list.items) \|*val\|` across foreign/Python re-entrant calls | re-entrancy appends to list, invalidating slice pointer | iterate by index (`while (i < len)`), hold temp ref, re-check bounds after call |
 | slice from `w.buffered()` used after more writes | silently overwritten | finish writing first, or copy |
 | `const chunk = try r.take(5)` then `chunk[4]` | `take` returns UP TO N bytes | check `chunk.len` |
 | slice escaping the scope that owns its buffer | use-after-free | extend the owner's lifetime |
@@ -37,6 +40,7 @@ When asked to review Zig code, follow this procedure:
 | Smell | Check | Fix |
 | --- | --- | --- |
 | `catch {}` / `catch \|_\| {}` | swallowed failure | `try`, or handle and log |
+| `errdefer` placed before a `catch` block returning `void`/value | dead code — `errdefer` only runs on error return | move cleanup directly into the `catch` block |
 | `bufPrint(...) catch unreachable` | PANICS on overflow | return an error, or `allocPrint` |
 | `switch` over an error set without `else` | misses new variants later | add `else` prong |
 | `@intCast(x)` / `@enumFromInt(x)` on untrusted input | panic on bad data | bounds check / `std.enums.fromInt` + `orelse` |
@@ -85,6 +89,7 @@ When asked to review Zig code, follow this procedure:
 | `[]const u8` passed to C `char*` | missing NUL terminator | `gpa.dupeZ(u8, s)` |
 | C preflight returns `N`, buffer of `N` allocated | NUL written out of bounds | allocate `N + 1` |
 | `std.mem.span(ptr)` on nullable C pointer | segfault on null | null-check first |
+| reference-stealing C API (`PyErr_SetRaisedException`, `SetItem`) called while `defer py_decref` is active | double-free / dangling pointer on scope exit | pass `py_newref(x)` so both the stealing API and defer own distinct increments |
 
 ## Review prompt (paste with the code)
 
