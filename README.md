@@ -1,8 +1,8 @@
 # Agent Skills Repository
 
-A curated collection of specialized skills for AI coding agents (e.g., Google Antigravity / AGY, Claude, Cursor, and LLM assistants).
+A curated collection of specialized skills for AI coding agents (e.g., Google Antigravity / AGY, Claude, Cursor, OpenAI Codex, Gemini CLI, and LLM assistants).
 
-Each skill provides clear guidelines, triggers, rules, and code patterns designed to keep AI assistants aligned with best practices, specific framework versions, and project conventions.
+Each skill follows the open [Agent Skills standard](https://agentskills.io/specification): a `SKILL.md` file with YAML frontmatter plus optional `scripts/`, `references/`, and `assets/` directories. Skills provide clear guidelines, triggers, rules, and code patterns designed to keep AI assistants aligned with best practices, specific framework versions, and project conventions.
 
 ---
 
@@ -11,7 +11,7 @@ Each skill provides clear guidelines, triggers, rules, and code patterns designe
 | Skill | Description | Key Topics |
 | :--- | :--- | :--- |
 | [**`okf-best-practices`**](./okf-best-practices/SKILL.md) | Google Open Knowledge Format (OKF v0.2) bundle rules and document structures. | YAML frontmatter schemas, trust signals, interlinking standards, document types, consumer robustness constraints. |
-| [**`zig-0160-development`**](./zig-0160-development/SKILL.md) | Comprehensive development guide for **Zig 0.16.0**. | Zig 0.16.0 `main(init)` entry points, `std.Io` / `std.process`, unmanaged containers, memory management, `build.zig`, C interop, code review & bug hunting. |
+| [**`zig-0160-development`**](./zig-0160-development/SKILL.md) | Comprehensive development guide for **Zig 0.16.0** (verified to also build on **0.17.0**). | Zig 0.16.0 `main(init)` entry points, `std.Io` / `std.process`, unmanaged containers, memory management, `build.zig`, C interop, code review & bug hunting. |
 
 ---
 
@@ -24,10 +24,36 @@ agents-skills/
 │   └── references/
 │       └── okf_specification.md  # Official OKF v0.2 specification reference
 ├── zig-0160-development/
-│   └── SKILL.md                  # Detailed rules, examples, patterns, and code-review checklist for Zig 0.16.0
+│   ├── SKILL.md                  # Concise core rules (under 500 lines); details in references/
+│   └── references/
+│       ├── language-basics.md    # Values, pointers, control flow, structs, errors, comptime, tests
+│       ├── containers-and-io.md  # ArrayList, hash maps, I/O, files, net, concurrency
+│       ├── build-and-templates.md # Program templates, build.zig, zon, deps, cross-compile
+│       ├── migration-errors-builtins.md # Migration table, compiler errors, builtins, checklist
+│       ├── dual-016-017.md       # Dual-build guide (0.16.0 + 0.17.0)
+│       └── review-catalog.md     # Bug-hunting catalog for Zig code review
+├── scripts/
+│   └── validate_skills.py        # Validates SKILL.md frontmatter against the spec
+├── templates/
+│   └── skill-template/           # Starter template for new skills
+├── .github/workflows/
+│   └── validate.yml              # CI validation
+├── CONTRIBUTING.md
 ├── LICENSE                       # MIT License
 └── README.md                     # Repository documentation
 ```
+
+---
+
+## ✅ Validation
+
+All skills are validated against the Agent Skills specification by CI:
+
+```bash
+python3 scripts/validate_skills.py
+```
+
+The validator checks required frontmatter (`name`, `description`), name/directory match, name format, description length, SKILL.md length (recommended < 500 lines), and relative links.
 
 ---
 
@@ -35,9 +61,11 @@ agents-skills/
 
 ### 1. Clone the Repository
 
-Clone this repository into your preferred location:
+Clone this repository into your preferred location (Mercurial or Git via hg-git):
 
 ```bash
+hg clone https://github.com/cwt/agents-skills.git
+# or
 git clone https://github.com/cwt/agents-skills.git
 ```
 
@@ -66,6 +94,12 @@ mkdir -p .agents/skills && cd .agents/skills
 ln -s /path/to/agents-skills/okf-best-practices .
 ln -s /path/to/agents-skills/zig-0160-development .
 ```
+
+---
+
+## 📝 Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to add or update a skill, including the skill template and validation steps.
 
 ---
 

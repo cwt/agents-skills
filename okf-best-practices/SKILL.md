@@ -1,6 +1,10 @@
 ---
 name: okf-best-practices
 description: Google Open Knowledge Format (OKF v0.2) bundle rules, file structure guidelines, metadata fields, trust signals, interlinking standards, and consumer robustness constraints.
+license: MIT
+metadata:
+  author: Chaiwat Suttipongsakul
+  version: "1.0"
 ---
 
 # Open Knowledge Format (OKF v0.2) Best Practices & Rules
@@ -41,7 +45,8 @@ The frontmatter MUST contain:
 * `description` (String): A brief summary for fast semantic routing.
 * `resource` (String): Link or ID to the production asset.
 * `tags` (Array of Strings): Flat list of categories.
-* `timestamp` (ISO-8601 UTC Datetime): Exact date/time of creation or last update.
+* `timestamp` (ISO-8601 UTC Datetime): Exact date/time of creation or last update. *(Legacy v0.1 form; still accepted by consumers.)*
+* `generated` (Object, v0.2): `{ by, at }` — records both the producer identity and the generation time. New producers SHOULD emit this instead of `timestamp`.
 
 #### OKF v0.2 Trust Signals (Opt-In Metadata)
 
@@ -53,6 +58,7 @@ OKF v0.2 standardizes metadata for provenance, trustworthiness, and lifecycle ma
 | **Provenance** | `sources` | Array of Strings | `[src/auth.zig, bq://analytics.events]` | Lineage tracking: origin assets or documents. |
 | **Trust Tier** | `verified` | String or Array | `unverified`, `machine-confirmed`, `human-reviewed` | Verification confidence level. |
 | **Freshness** | `stale_after` | ISO-8601 UTC | `2026-12-31T00:00:00Z` | Absolute date after which concept requires re-check. |
+| **Generation** | `generated` | Object | `{ by, at }` | Producer identity + time (v0.2 form replacing legacy `timestamp`). |
 | **Attestation** | `type: attested_computation` | Archetype | *(used in `type` field)* | Verifiable execution/query output concept. |
 
 ### 2.2. Reserved Filenames
@@ -80,6 +86,7 @@ To link documents within the OKF bundle, **ALWAYS use relative paths** based on 
   * *Same directory*: `[Local Rule](./local-rule.md)` or `[Local Rule](local-rule.md)`.
   * *Subdirectory*: `[Mandates](./mandates/mandates.md)`.
   * *Parent directory*: `[Home](../index.md)`.
+* **Claim-Level Attribution (v0.2)**: Prefer keyed Markdown footnotes (e.g. `[^src-1]`) that resolve to entries in the `sources` frontmatter, instead of inline `# Citations` headings. `sources` records lineage; footnotes connect individual claims.
 
 ### 2.6. Fault-Tolerance Constraints (For AI Consumers)
 
@@ -93,7 +100,7 @@ To link documents within the OKF bundle, **ALWAYS use relative paths** based on 
 
 * [ ] Starts with `---` as the first line of the file?
 * [ ] Contains a `type` metadata field?
-* [ ] Contains other key attributes (`title`, `description`, `timestamp`)?
+* [ ] Contains other key attributes (`title`, `description`, `timestamp` or `generated`)?
 * [ ] For production/agent docs, includes v0.2 trust signals (`status`, `sources`, `verified`, `stale_after`) where applicable?
 * [ ] Closes frontmatter with `---`?
 * [ ] Standard Markdown body immediately follows?

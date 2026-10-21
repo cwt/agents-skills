@@ -15,6 +15,7 @@ This layout ensures that curated context is machine-queryable by AI agents while
 An **OKF Bundle** is a standard directory of files.
 
 * **Encoding:** All files MUST be UTF-8 encoded plain text.
+* **Canonical repository:** The specification, reference agent, and sample bundles now live in `GoogleCloudPlatform/open-knowledge-format`. The older `GoogleCloudPlatform/knowledge-catalog/okf` snapshot is frozen and no longer maintained — do not use it as a source.
 * **Concepts:** Each individual file within the bundle represents a single atomic "concept" (e.g., a table, API endpoint, component description, system architecture piece, runbook, policy, or attested computation).
 * **Identity:** The unique identifier for any concept is its relative file path within the bundle root.
 
@@ -46,7 +47,8 @@ The frontmatter must be enclosed by triple hyphens (`---`).
 | `verified` | Optional (v0.2) | String or Array | Trust tier (`unverified`, `machine-confirmed`, `human-reviewed`). |
 | `stale_after` | Optional (v0.2) | ISO-8601 UTC | Freshness deadline after which the concept should be re-validated. |
 | `tags` | Optional | Array | A flat list of category tags for filtering and indexing. |
-| `timestamp` | Optional | ISO-8601 UTC | The exact UTC datetime the document was created or last updated. |
+| `timestamp` | Optional | ISO-8601 UTC | The exact UTC datetime the document was created or last updated. *(Legacy v0.1 form; still accepted.)* |
+| `generated` | Optional (v0.2) | Object `{ by, at }` | Producer identity + generation time. New producers SHOULD emit this instead of `timestamp`. |
 
 > **Note:** Producers can add arbitrary custom keys to the frontmatter as needed. AI consumers must tolerate and gracefully ignore unknown keys without erroring out.
 
@@ -66,6 +68,7 @@ To transform a flat directory into a multi-dimensional semantic graph, concepts 
   * *Same directory:* `[Deployment Steps](./deploy-guide.md)` or `[Deployment Steps](deploy-guide.md)`
   * *Parent directory:* `[Back to Index](../index.md)`
 * **Why Avoid Repo-Root `/` Links:** Paths starting with `/` resolve to the repository root on GitHub and static doc renderers rather than the bundle root, producing broken links when bundles live in subdirectories like `docs/`.
+* **Claim-Level Attribution (v0.2):** Prefer keyed Markdown footnotes (e.g. `[^src-1]`) resolving to entries in `sources`, instead of inline `# Citations` headings. `sources` records lineage; footnotes connect individual claims. Two v0.1 forms are now legacy fallbacks: `timestamp` (use `generated: { by, at }`) and inline `# Citations` (use `sources` + keyed footnotes).
 
 ---
 
