@@ -10,7 +10,7 @@ Each skill follows the open [Agent Skills standard](https://agentskills.io/speci
 
 | Skill | Description | Key Topics |
 | :--- | :--- | :--- |
-| [**`okf-best-practices`**](./okf-best-practices/SKILL.md) | Google Open Knowledge Format (OKF v0.2) bundle rules and document structures. | YAML frontmatter schemas, trust signals, interlinking standards, document types, consumer robustness constraints. |
+| [**`okf-best-practices`**](./okf-best-practices/SKILL.md) | Open Knowledge Format (OKF v0.3) bundle rules and document structures. | YAML frontmatter schemas, provenance, trust tiers, freshness, lifecycle (`superseded_by`), Attested Computations, path/link resolution, consumer conformance. |
 | [**`zig-0160-development`**](./zig-0160-development/SKILL.md) | Comprehensive development guide for **Zig 0.16.0** (verified to also build on **0.17.0**). | Zig 0.16.0 `main(init)` entry points, `std.Io` / `std.process`, unmanaged containers, memory management, `build.zig`, C interop, code review & bug hunting. |
 
 ---
@@ -20,9 +20,9 @@ Each skill follows the open [Agent Skills standard](https://agentskills.io/speci
 ```text
 agents-skills/
 ├── okf-best-practices/
-│   ├── SKILL.md                  # Main skill definition & prompt instructions for OKF v0.2
+│   ├── SKILL.md                  # Main skill definition & prompt instructions for OKF v0.3
 │   └── references/
-│       └── okf_specification.md  # Official OKF v0.2 specification reference
+│       └── okf_specification.md  # Official OKF v0.3 specification reference
 ├── zig-0160-development/
 │   ├── SKILL.md                  # Concise core rules (under 500 lines); details in references/
 │   └── references/
